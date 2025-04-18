@@ -9,7 +9,7 @@ This plan focuses on building the MVP defined in `hackathon_prd.md` with maximum
 1.  **Frontend:** **Next.js (React)** - Widely used, quick start (`create-next-app`), integrates UI and basic backend.
 2.  **Backend:** **Next.js API Routes** - Included with Next.js, simple server-side logic within the same project.
 3.  **Data Storage:** **Local Filesystem (Node.js `fs` module)** - Absolute minimum dependency using built-in Node.js module. **CRITICAL CAVEAT:** Works for local demo (`next dev`), but **will not work** on standard serverless deployments (Vercel, etc.). This limitation must be stated during the demo.
-4.  **LLM API:** **Google Gemini API** (`@google/generative-ai` library) - Core requirement.
+4.  **LLM API:** **Google Gemini API** (`@google/generative-ai` library) - Core requirement. USE gemini-1.5-flash-latest FOR THE MODEL.
 
 **Minimal Dependencies:**
 
