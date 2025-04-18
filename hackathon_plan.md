@@ -30,19 +30,19 @@ This plan focuses on building the MVP defined in `hackathon_prd.md` with maximum
 **Hour 1: Setup & Basic Chat (0:00-1:00)**
 
 *   **(0:00-0:15) Project Setup:**
-    *   Open terminal in your project folder.
-    *   Run `npx create-next-app@latest second-brain-hackathon` (use defaults, select TypeScript, optionally Tailwind).
-    *   `cd second-brain-hackathon`
-    *   Install Gemini SDK: `npm install @google/generative-ai`
-    *   Create `.env.local` file in the project root. Add `GEMINI_API_KEY=YOUR_API_KEY_HERE` to it.
-    *   Add `.env.local` to your `.gitignore` file.
-    *   Create an empty file: `touch documents.json` in the project root (or a `./data` folder). Add `documents.json` to `.gitignore`.
-    *   Initialize Git: `git init && git add . && git commit -m "Initial project setup"`
+    *   ✅ Open terminal in your project folder.
+    *   ✅ Run `npx create-next-app@latest second-brain-hackathon` (use defaults, select TypeScript, optionally Tailwind).
+    *   ✅ `cd second-brain-hackathon`
+    *   ✅ Install Gemini SDK: `npm install @google/generative-ai`
+    *   ✅ Create `.env.local` file in the project root. Add `GEMINI_API_KEY=YOUR_API_KEY_HERE` to it.
+    *   ✅ Add `.env.local` to your `.gitignore` file.
+    *   ✅ Create an empty file: `touch documents.json` in the project root (or a `./data` folder). Add `documents.json` to `.gitignore`.
+    *   ✅ Initialize Git: `git init && git add . && git commit -m "Initial project setup"`
 *   **(0:15-0:40) Simple Chat UI (React Component):**
-    *   Edit `app/page.tsx`.
-    *   Use `useState` hook for chat history array and current input string.
-    *   Add basic HTML elements: `<input>` field bound to input state, `<button>` for sending, and a `<div>` to map over and display chat history.
-    *   Apply minimal styling (e.g., basic Tailwind classes like `p-2`, `border`, `mb-2`).
+    *   ✅ Edit `app/page.tsx`.
+    *   ✅ Use `useState` hook for chat history array and current input string.
+    *   ✅ Add basic HTML elements: `<input>` field bound to input state, `<button>` for sending, and a `<div>` to map over and display chat history.
+    *   ✅ Apply minimal styling (e.g., basic Tailwind classes like `p-2`, `border`, `mb-2`).
 *   **(0:40-1:00) Basic API Route & Gemini Connection:**
     *   Create the API route file: `app/api/chat/route.ts`.
     *   Implement a `POST` request handler function (`export async function POST(request: Request) { ... }`).
