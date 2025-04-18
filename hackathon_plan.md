@@ -44,18 +44,18 @@ This plan focuses on building the MVP defined in `hackathon_prd.md` with maximum
     *   ✅ Add basic HTML elements: `<input>` field bound to input state, `<button>` for sending, and a `<div>` to map over and display chat history.
     *   ✅ Apply minimal styling (e.g., basic Tailwind classes like `p-2`, `border`, `mb-2`).
 *   **(0:40-1:00) Basic API Route & Gemini Connection:**
-    *   Create the API route file: `app/api/chat/route.ts`.
-    *   Implement a `POST` request handler function (`export async function POST(request: Request) { ... }`).
-    *   Frontend (`app/page.tsx`): Implement the `onClick` handler for the send button to:
-        *   Make a `fetch` call to `/api/chat` with `method: 'POST'`, `headers: {'Content-Type': 'application/json'}`, and `body: JSON.stringify({ message: userInput })`.
-        *   Update chat history state with the user's message immediately (optimistic update).
-    *   Backend (`app/api/chat/route.ts`):
-        *   Read the incoming message: `const { message } = await request.json();`
-        *   Import and initialize Gemini client: `import { GoogleGenerativeAI } from "@google/generative-ai"; const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!); const model = genAI.getGenerativeModel("gemini-pro");`
-        *   Call Gemini: `const result = await model.generateContent(message); const response = await result.response; const text = response.text();`
-        *   Return the response: `return new Response(JSON.stringify({ response: text }), { status: 200 });`
-    *   Frontend (`app/page.tsx`): In the `.then()` of the fetch call, parse the JSON response and update the chat history state with the AI's message. Clear the input field.
-    *   *Test:* Verify basic chat interaction works. Check browser console and terminal for errors.
+    *   ✅ Create the API route file: `app/api/chat/route.ts`.
+    *   ✅ Implement a `POST` request handler function (`export async function POST(request: Request) { ... }`).
+    *   ✅ Frontend (`app/page.tsx`): Implement the `onClick` handler for the send button to:
+        *   ✅ Make a `fetch` call to `/api/chat` with `method: 'POST'`, `headers: {'Content-Type': 'application/json'}`, and `body: JSON.stringify({ message: userInput })`.
+        *   ✅ Update chat history state with the user's message immediately (optimistic update).
+    *   ✅ Backend (`app/api/chat/route.ts`):
+        *   ✅ Read the incoming message: `const { message } = await request.json();`
+        *   ✅ Import and initialize Gemini client: `import { GoogleGenerativeAI } from "@google/generative-ai"; const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!); const model = genAI.getGenerativeModel("gemini-pro");`
+        *   ✅ Call Gemini: `const result = await model.generateContent(message); const response = await result.response; const text = response.text();`
+        *   ✅ Return the response: `return new Response(JSON.stringify({ response: text }), { status: 200 });`
+    *   ✅ Frontend (`app/page.tsx`): In the `.then()` of the fetch call, parse the JSON response and update the chat history state with the AI's message. Clear the input field.
+    *   ✅ *Test:* Verify basic chat interaction works. Check browser console and terminal for errors.
 
 **Hour 2: Document Storage (Local File) (1:00-2:00)**
 
