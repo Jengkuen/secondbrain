@@ -15,204 +15,225 @@ function sanitizeFilename(name: string): string {
 
 async function createOrUpdateObsidianNote(
   message: string,
-  aiResponse: string,
   genAIInstance: GoogleGenerativeAI
 ) {
   const userDataDir = path.join(process.cwd(), 'userData');
-  const noteGenModelName = "gemini-2.5-flash-preview-04-17";
+  // Use a model suitable for complex instruction following / structured output
+  const noteGenModelName = "gemini-2.5-flash-preview-04-17"; // Reverted back from 1.5-pro as it caused 404
   const noteGenModel = genAIInstance.getGenerativeModel({ model: noteGenModelName });
-  console.log(`Using Gemini note generation model: ${noteGenModelName}`); // Log the note generation model
+  console.log(`Using Gemini note generation model: ${noteGenModelName}`);
 
   try {
     // 1. Ensure userData directory exists
     await fs.mkdir(userDataDir, { recursive: true });
 
-    // 2. Prompt for Information Extraction
-    const extractionPrompt = `Given the following user query and AI response:
-User Query: "${message}"
-AI Response: "${aiResponse}"
+    // 2. Prompt for Entity Extraction and File Structure Suggestion
+    //    Input: User's raw message.
+    //    Output: Structured list of actions (CREATE_PERSON, CREATE_EVENT, CREATE_JOURNAL).
+    const extractionPrompt = `Analyze the following user message and identify key entities like people, events, places, and specific dates. Based on these entities, suggest a structured way to store this information as separate Markdown files.
 
-1. Identify the primary specific topic being discussed (e.g., "React State Management Hooks", "Python List Comprehensions"). Keep it concise.
-2. Summarize the key information or insights from the AI response regarding this topic in 2-4 concise sentences.
-3. Identify 1-3 broader parent concepts or closely related topics (e.g., for "React State Management Hooks", related concepts might be "React", "State Management", "Frontend Development"). List only the concept names.
+User Message: "${message}"
 
-Return the result **only** as a valid JSON object with the keys "primaryTopic" (string), "summary" (string), and "relatedConcepts" (array of strings). Ensure the JSON is well-formed.
-Example:
+Instructions:
+1.  Identify Persons: List any names mentioned.
+2.  Identify Events: List any specific events, meetings, or occasions mentioned.
+3.  Identify Dates: Extract any specific dates (try to format as YYYY-MM-DD).
+4.  Identify the Core Subject/Action: Briefly describe what the message is about (e.g., "Meeting friend", "Learned concept", "Attended event").
+5.  Suggest File Actions: Based on the identified entities, generate a list of actions to create corresponding Markdown files. Use the following formats ONLY:
+    *   For a person: \`CREATE_PERSON: [Person's Name]\`
+    *   For an event: \`CREATE_EVENT: [Event Name]\`
+    *   For a dated journal entry: \`CREATE_JOURNAL: [YYYY-MM-DD]\` (Use the core subject as context for the journal).
+
+Return the result ONLY as a single, strictly valid JSON object. Do NOT include any text, explanations, or markdown formatting (like \`\`\`json) before or after the JSON object itself. The entire response must be ONLY the JSON object.
+
+Example User Message: "John doe is my friend, he's a cool guy i met on 18 April 2025 at the Signal fire hackathon!"
+Example JSON Output:
 {
-  "primaryTopic": "React State Management Hooks",
-  "summary": "useState and useReducer are key React hooks for managing component state. useState is simpler for basic state, while useReducer is better for complex logic.",
-  "relatedConcepts": ["React", "State Management", "JavaScript Frameworks"]
-}`; 
+  "persons": ["John Doe"],
+  "events": ["Signal fire hackathon"],
+  "dates": ["2025-04-18"],
+  "coreSubject": "Meeting friend John Doe at Signal fire hackathon",
+  "fileActions": [
+    "CREATE_PERSON: John Doe",
+    "CREATE_EVENT: Signal fire hackathon",
+    "CREATE_JOURNAL: 2025-04-18"
+  ]
+}`;
 
-    console.log("Sending extraction prompt to Gemini...");
+    console.log("Sending entity extraction prompt to Gemini...");
     const extractionResult = await noteGenModel.generateContent(extractionPrompt);
     const extractionResponse = await extractionResult.response;
     const rawJsonText = extractionResponse.text().trim();
 
-    // 3. Parse LLM Response
-    let noteData: { primaryTopic: string; summary: string; relatedConcepts: string[] };
+    // 3. Parse LLM Response for File Actions
+    let extractionData: {
+        persons: string[];
+        events: string[];
+        dates: string[];
+        coreSubject: string;
+        fileActions: string[];
+    };
     try {
-        // Attempt to handle potential markdown code blocks
-        const cleanedJsonText = rawJsonText.replace(/^```json\n?/, '').replace(/\n?```$/, '');
-        noteData = JSON.parse(cleanedJsonText);
-        console.log("Extracted Note Data:", noteData);
-        if (!noteData.primaryTopic || !noteData.summary || !Array.isArray(noteData.relatedConcepts)) {
-            throw new Error("Invalid structure in JSON response from LLM");
+        // More robust JSON extraction: find the first { and last }
+        const jsonMatch = rawJsonText.match(/\{[\s\S]*\}/);
+        if (!jsonMatch || !jsonMatch[0]) {
+             throw new Error("Could not find JSON object boundaries ({...}) in the LLM response.");
+        }
+        const extractedJson = jsonMatch[0];
+        extractionData = JSON.parse(extractedJson);
+        console.log("Extracted File Actions Data:", extractionData);
+        // Basic validation after successful parse
+        if (!Array.isArray(extractionData.fileActions)) {
+            throw new Error("Parsed JSON is missing 'fileActions' array.");
         }
     } catch (parseError: any) {
-        console.error("Failed to parse JSON from note extraction LLM:", parseError);
-        console.error("Raw response was:", rawJsonText);
+        console.error("Failed to parse JSON from entity extraction LLM:", parseError);
+        console.error("Original Raw response was:", rawJsonText); // Log the original raw text
         return; // Stop processing if parsing fails
     }
 
-    // 4. Check for existing semantically similar notes before deciding filename
-    let targetFilename = '';
-    let existingFiles: string[] = [];
-    try {
-        existingFiles = (await fs.readdir(userDataDir))
-                            .filter(file => file.endsWith('.md'))
-                            .map(file => file.replace(/\.md$/, '')); // Get basenames
-    } catch (readdirError: any) {
-        if (readdirError.code !== 'ENOENT') {
-            console.error("Error reading userData directory:", readdirError);
-            // Decide how to proceed - maybe attempt to create anyway?
-            // For now, let's try to proceed assuming no existing files check is possible.
+    // 4. Process File Actions - Create Markdown files
+    const generationTimestamp = new Date().toISOString();
+
+    for (const action of extractionData.fileActions) {
+        const parts = action.split(': ');
+        if (parts.length < 2) continue; // Skip malformed actions
+
+        const actionType = parts[0];
+        const entityName = parts.slice(1).join(': '); // Re-join in case name had colons
+        const sanitizedFilename = sanitizeFilename(entityName);
+
+        if (!sanitizedFilename || sanitizedFilename === '_') {
+             console.warn(`Skipping action due to invalid sanitized filename for entity: ${entityName}`);
+             continue;
         }
-        // If ENOENT, existingFiles remains empty, which is fine.
-    }
 
-    if (existingFiles.length > 0) {
-        const similarityCheckPrompt = `Given the new topic "${noteData.primaryTopic}" and the list of existing note titles (filenames): ${JSON.stringify(existingFiles)}.
-
-Which existing title is the most semantically similar to the new topic? 
-Focus on the core meaning, ignoring minor differences in wording or capitalization.
-
-If you find a title that is a very strong semantic match (meaning it covers the same core concept), return **only** that exact existing title string from the list.
-If no existing title is a strong semantic match, return the string "None".`;
-
-        console.log("Checking for semantically similar existing notes...");
-        try {
-            const similarityResult = await noteGenModel.generateContent(similarityCheckPrompt);
-            const similarityResponse = await similarityResult.response;
-            const similarFilename = similarityResponse.text().trim();
-
-            if (existingFiles.includes(similarFilename)) {
-                targetFilename = similarFilename; // Use the existing filename
-                console.log(`Found semantically similar existing note: "${targetFilename}.md". Will merge into this file.`);
-            } else {
-                 console.log("No strongly similar existing note found by LLM.");
-                 // Fall through to sanitize and use the new topic
-            }
-        } catch (similarityError) {
-            console.error("Error during semantic similarity check with LLM:", similarityError);
-            // Fallback: proceed as if no similar file was found
-        }
-    }
-
-    // If no similar file was found or check failed/skipped, use the new topic
-    if (!targetFilename) {
-        const sanitizedPrimaryTopic = sanitizeFilename(noteData.primaryTopic);
-        if (!sanitizedPrimaryTopic || sanitizedPrimaryTopic === '_') {
-            console.error("Primary topic sanitized to an invalid filename, aborting note creation.");
-            return;
-        }
-        targetFilename = sanitizedPrimaryTopic;
-        console.log(`No similar existing note found or check skipped. Using filename: "${targetFilename}.md"`);
-    }
-
-    // 5. Sanitize related concepts (needed regardless of filename choice)
-    const sanitizedRelatedConcepts = noteData.relatedConcepts.map(sanitizeFilename).filter(name => name && name !== '_');
-
-    // 6. Generate Markdown Content block for the NEW interaction (summary, related, original timestamp)
-    const generationTimestamp = new Date().toISOString(); // Keep track of original generation
-    const newSummaryBlock = `${noteData.summary}\\n`;
-    let newInfoBlock = newSummaryBlock;
-    if (sanitizedRelatedConcepts.length > 0) {
-        newInfoBlock += `\\nRelated: ${sanitizedRelatedConcepts.map(rc => `[[${rc}]]`).join(' ')}\\n`;
-    }
-    newInfoBlock += `\\n*Generated from chat on ${generationTimestamp}*\\n`; // Include original timestamp for context in merge prompt
-
-    // 7. File System Operations using the determined target filename
-    const primaryFilePath = path.join(userDataDir, `${targetFilename}.md`);
-    const updateTimestamp = new Date().toISOString(); // Timestamp for the "Last updated" metadata
-
-    try {
+        const filePath = path.join(userDataDir, `${sanitizedFilename}.md`);
+        let fileExists = false;
         let existingContent = '';
-        let isNewFile = false;
+
+        // Check if file exists and read content if it does
         try {
-            existingContent = await fs.readFile(primaryFilePath, 'utf-8');
+            existingContent = await fs.readFile(filePath, 'utf-8');
+            fileExists = true;
         } catch (readError: any) {
-            if (readError.code === 'ENOENT') {
-                // File doesn't exist, start with just the title
-                // Use the *original* primary topic for the title, not necessarily the targetFilename if it came from an existing file
-                existingContent = `# ${noteData.primaryTopic}\\n\\n`;
-                isNewFile = true; // Flag that this is effectively the first version
-            } else {
-                throw readError; // Re-throw unexpected read errors
+            if (readError.code !== 'ENOENT') {
+                console.error(`Error reading file ${filePath} before potential update:`, readError);
+                continue; // Skip this action on unexpected read error
             }
+            // ENOENT means file doesn't exist, fileExists remains false
         }
 
-        // 8. Prepare Merge Prompt for LLM
-        // If it's a new file, the existingContent only has the title.
-        // The prompt asks the LLM to synthesize the summary and combine related links.
-        const mergePrompt = `Given the existing Markdown note content and new information derived from a recent conversation, please merge them intelligently into a single, updated note.
+        // Prepare the block of new information (for create or update)
+        const updateTimestamp = new Date().toISOString();
+        const relatedLinks = extractionData.fileActions
+            .map(a => {
+                const actionParts = a.split(': ');
+                if (actionParts.length < 2) return null;
+                const otherEntity = actionParts.slice(1).join(': ');
+                const otherFilename = sanitizeFilename(otherEntity);
+                // Don't link to self
+                return (otherFilename && otherFilename !== '_' && otherFilename !== sanitizedFilename) ? `[[${otherFilename}]]` : null;
+            })
+            .filter(link => link !== null)
+            .join(' ');
+
+        // Use a clear separator and context for the new info
+        let newInfoBlock = `\n\n---\n\n**Context from ${updateTimestamp}:**\nOriginally mentioned in relation to: "${extractionData.coreSubject}"\n\nUser Input:\n\`\`\`\n${message}\n\`\`\`\n`;
+        if (relatedLinks) {
+            newInfoBlock += `\nRelated: ${relatedLinks}\n`;
+        }
+
+        try {
+            if (fileExists) {
+                // --- Update existing file --- //
+                console.log(`Note for "${entityName}" (${filePath}) already exists. Attempting merge.`);
+
+                // Prepare Merge Prompt for LLM
+                const mergePrompt = `Given the existing Markdown note content and new information derived from a recent conversation, please merge them intelligently into a single, updated note.
 
 **Existing Note Content:**
 \`\`\`markdown
 ${existingContent}
 \`\`\`
 
-**New Information (Summary & Related Concepts from recent conversation):**
+**New Information Block (Context from recent interaction):**
 \`\`\`markdown
-${newInfoBlock}
+${newInfoBlock}  // This block contains the latest user input, context, and related links from the *new* interaction.
 \`\`\`
 
 **Instructions:**
-1.  Keep the main title (the first line starting with '#'). If the existing content is just the title, use the summary from the "New Information" as the initial summary.
-2.  If there's existing summary content, review it along with the summary from the "New Information". Synthesize these into a single, comprehensive, and up-to-date summary paragraph reflecting the current understanding of the topic. Place this synthesized summary directly after the title. Avoid simple appending of summaries.
-3.  Review any existing "Related: [[link1]] [[link2]]..." lines and the new related concepts from the "New Information". Combine these into a single "Related:" line below the summary, ensuring no duplicate links (e.g., "Related: [[link1]] [[link2]] [[new_link]]"). If no related links exist in either source, omit this line.
-4.  Add a final line indicating the update time: \`*Last updated on: ${updateTimestamp}*\`. Do not include the original "Generated from chat on..." timestamps or '---' separators from the input content.
-5.  Ensure the output is valid Markdown and contains only the merged note content as described.
+1.  Keep the main title (the first line starting with '#').
+2.  Analyze the existing summary/content under the title and the information in the "New Information Block".
+3.  Synthesize these into a single, comprehensive, and updated summary paragraph reflecting the *current, combined understanding* of the topic. Place this synthesized summary directly after the title (potentially under a "## Summary" heading if appropriate).
+4.  Identify any existing "Related: [[link1]] [[link2]]..." lines and the new related concepts from the "New Information Block". Combine these into a single "Related:" line below the summary, ensuring no duplicate links. If no related links exist in either source, omit this line.
+5.  Ensure the correct tag (e.g., #person, #event, #journal - likely already present in existing content, but verify) is present near the bottom.
+6.  Add a final line indicating the update time: \`*Last updated on: ${updateTimestamp}*\`. Remove any previous "Created on" or "Last updated on" lines.
+7.  Ensure the output is valid Markdown and contains ONLY the merged and updated note content as described.
 
-**Output the merged Markdown content ONLY.**`;
+**Output the updated Markdown content ONLY.**`;
 
-        console.log(`Sending merge prompt to Gemini for note: ${targetFilename}.md`);
-        // Use the same noteGenModel for merging
-        const mergeResult = await noteGenModel.generateContent(mergePrompt);
-        const mergeResponse = await mergeResult.response;
-        const mergedContent = mergeResponse.text().trim();
+                console.log(`Sending merge prompt to Gemini for note: ${sanitizedFilename}.md`);
+                const mergeResult = await noteGenModel.generateContent(mergePrompt);
+                const mergeResponse = await mergeResult.response;
+                const mergedContent = mergeResponse.text().trim();
 
-        if (!mergedContent) {
-            console.error(`LLM merge returned empty content for ${primaryFilePath}. Skipping update.`);
-            // Optionally: Fallback to appending if merge fails? For now, we skip.
-        } else {
-            // 9. Write Merged Content
-            await fs.writeFile(primaryFilePath, mergedContent);
-            console.log(`Successfully ${isNewFile ? 'created' : 'updated'} note with merged content: ${primaryFilePath}`);
-        }
-
-        // Ensure related concept files exist (Logic remains the same, ensure linking uses the *final* target filename)
-        for (const relatedConcept of noteData.relatedConcepts) {
-            const sanitizedRC = sanitizeFilename(relatedConcept);
-            if (!sanitizedRC || sanitizedRC === '_') continue;
-
-            const relatedFilePath = path.join(userDataDir, `${sanitizedRC}.md`);
-            try {
-                await fs.access(relatedFilePath);
-            } catch (accessError: any) {
-                if (accessError.code === 'ENOENT') {
-                    // File doesn't exist, create placeholder linking to the *target* file
-                    const placeholderContent = `# ${relatedConcept}\\n\\nThis topic was automatically created as a link from [[${targetFilename}]] on ${generationTimestamp}.\\n`;
-                    await fs.writeFile(relatedFilePath, placeholderContent);
-                    console.log(`Created placeholder note: ${relatedFilePath}`);
+                if (!mergedContent) {
+                    console.error(`LLM merge returned empty content for ${filePath}. Skipping update.`);
+                    // Fallback? Append newInfoBlock as before?
+                    // const fallbackContent = existingContent + "\n\n---\n\n## Update Failed - Appending Raw Context\n" + newInfoBlock;
+                    // await fs.writeFile(filePath, fallbackContent);
                 } else {
-                    throw accessError; // Re-throw other access errors
+                    // Write the merged content from the LLM
+                    await fs.writeFile(filePath, mergedContent);
+                    console.log(`Successfully updated note with merged content: ${filePath}`);
                 }
-            }
-        }
 
-    } catch (fileOpError) {
-        console.error(`Error performing file operations for note '${targetFilename}':`, fileOpError);
+            } else {
+                // --- Create new file --- //
+                let tag = '';
+                let title = '';
+                let initialSummary = extractionData.coreSubject || "Initial context."; // Use coreSubject as initial summary
+
+                switch (actionType) {
+                    case 'CREATE_PERSON':
+                        title = `# ${entityName}`;
+                        tag = '#person';
+                        break;
+                    case 'CREATE_EVENT':
+                        title = `# ${entityName}`;
+                        tag = '#event';
+                        break;
+                    case 'CREATE_JOURNAL':
+                        const titleDate = entityName.match(/^\\d{4}-\\d{2}-\\d{2}$/) ? entityName : sanitizedFilename;
+                        title = `# Journal Entry: ${titleDate}`;
+                        tag = '#journal';
+                        break;
+                    default:
+                        console.warn(`Unknown action type: ${actionType}`);
+                        continue; // Skip unknown actions
+                }
+
+                // Construct the initial content with structure
+                const initialContent = `${title}
+
+## Summary
+${initialSummary}
+
+## Context
+${newInfoBlock.replace('**Context from', 'Initial context from').replace(/^\n\n---\n\n/, '')} 
+
+${tag}
+
+*Created on: ${updateTimestamp}*`;
+
+                await fs.writeFile(filePath, initialContent);
+                console.log(`Successfully created note: ${filePath} with tag ${tag}`);
+            }
+        } catch (fileOpError) {
+            console.error(`Error writing file during ${fileExists ? 'update' : 'creation'} for action "${action}" on file ${filePath}:`, fileOpError);
+            // Continue with the next action even if one fails
+        }
     }
 
   } catch (error) {
@@ -253,7 +274,7 @@ export async function POST(request: Request) {
       return new Response(JSON.stringify({ error: "Invalid message format" }), { status: 400 });
     }
 
-    // --- RAG: Retrieve relevant context using Embeddings ---
+    // --- RAG: Retrieve relevant context using Embeddings --- //
     let documents: Document[] = [];
     let contextString = "";
     try {
@@ -298,7 +319,6 @@ export async function POST(request: Request) {
                 console.log("No documents with embeddings found or query embedding failed.");
             }
 
-
             // 3. Use Context based on threshold
             const SIMILARITY_THRESHOLD = 0.7; // Adjust as needed
             if (mostSimilarDoc && highestSimilarity > SIMILARITY_THRESHOLD) {
@@ -312,8 +332,6 @@ export async function POST(request: Request) {
             }
         } catch (embeddingError) {
             console.error("Error during embedding generation or similarity calculation:", embeddingError);
-            // Decide how to handle: proceed without context, or return error?
-            // For hackathon, proceeding without context might be okay.
             contextString = ""; // Ensure context is empty on error
         }
     }
@@ -321,7 +339,6 @@ export async function POST(request: Request) {
 
     // Construct the prompt for Gemini, including context if found
     const userQuery = "User query: " + message;
-    // Refined System Prompt (example)
     const systemPrompt = `You are the user's Second Brain assistant.
 Use the provided CONTEXT (if any) from previous conversations and your general knowledge to answer the USER QUERY.
 Prioritize information from the CONTEXT when relevant. Be concise and helpful.
@@ -333,14 +350,14 @@ ${contextString || "No relevant context found."}
 `;
 
     const finalPrompt = systemPrompt + userQuery;
-    console.log("Prompt sent to Gemini (Chat):\n", finalPrompt); // Log the full prompt for debugging
+    console.log("Prompt sent to Gemini (Chat):\n", finalPrompt);
 
     // Call Chat Model
     const chatResult = await chatModel.generateContent(finalPrompt);
     const chatResponse = await chatResult.response;
     const aiChatResponseText = chatResponse.text();
 
-    // --- Save the new interaction with Embedding ---
+    // --- Save the new interaction with Embedding --- //
     let newDocEmbedding: number[] | null = null;
     try {
         const docContentToEmbed = `User: ${message}\nAI: ${aiChatResponseText}`; // Embed the full interaction
@@ -351,7 +368,6 @@ ${contextString || "No relevant context found."}
         // Continue saving without embedding if generation fails
     }
 
-     // Generate document data for the *current* interaction
     const newDoc: Document = {
         id: crypto.randomUUID(),
         topic: message.substring(0, 50) + (message.length > 50 ? '...' : ''), // Use first 50 chars of prompt as topic
@@ -360,27 +376,43 @@ ${contextString || "No relevant context found."}
         embedding: newDocEmbedding, // Add the generated embedding (or null if failed)
     };
 
-    // Append new document to the *in-memory* list
-    // Make sure documents array includes the latest state before appending
-    // (Reading again might be safer in concurrent scenarios, but less efficient here)
-    documents.push(newDoc);
+    // Read documents again before pushing to avoid potential race conditions if multiple requests happen
+    // Although for this app, it might be unlikely. A more robust solution might use a DB.
+    let currentDocuments: Document[] = [];
+    try {
+      const currentFileContent = await fs.readFile(filePath, 'utf-8');
+      if (currentFileContent.trim()) {
+          currentDocuments = JSON.parse(currentFileContent);
+      }
+    } catch (readError: any) {
+       if (readError.code !== 'ENOENT') {
+         console.error("Error reading documents.json before final save:", readError);
+         // Decide if we should proceed with potentially outdated documents array or error out
+       }
+       // If ENOENT or error, currentDocuments remains empty or potentially outdated from above
+       // For simplicity here, we'll use the potentially outdated `documents` array read earlier.
+       currentDocuments = documents; // Fallback to the array read at the start of POST
+    }
 
+    currentDocuments.push(newDoc);
 
     // Write the updated list back to the file
     try {
-        await fs.writeFile(filePath, JSON.stringify(documents, null, 2)); // Use null, 2 for pretty printing
-        console.log(`Successfully saved interaction to documents.json (Total docs: ${documents.length})`);
+        await fs.writeFile(filePath, JSON.stringify(currentDocuments, null, 2));
+        console.log(`Successfully saved interaction to documents.json (Total docs: ${currentDocuments.length})`);
     } catch (writeError) {
         console.error("Error writing documents.json:", writeError);
+        // Don't necessarily stop the whole process, maybe just log it?
+        // For now, return error to indicate save failure
         return new Response(JSON.stringify({ error: "Failed to save interaction history" }), { status: 500 });
     }
     // --- End Saving ---
 
-    // --- Start Obsidian Note Creation (Non-blocking) ---
-    // We don't await this, so the main response isn't delayed
-    createOrUpdateObsidianNote(message, aiChatResponseText, genAI)
+    // --- Start Obsidian Note Creation (Non-blocking) --- //
+    // Call the updated function which handles create/update
+    createOrUpdateObsidianNote(message, genAI)
       .catch(err => {
-          console.error("Background Obsidian note creation failed:", err);
+          console.error("Background Obsidian note creation/update failed:", err);
       });
     // --- End Obsidian Note Creation ---
 
@@ -388,7 +420,7 @@ ${contextString || "No relevant context found."}
     return new Response(JSON.stringify({ response: aiChatResponseText }), { status: 200 });
 
   } catch (error) {
-    console.error("Error processing chat request:", error);
+    console.error("Error processing chat request in POST:", error);
     return new Response(JSON.stringify({ error: "An internal server error occurred" }), { status: 500 });
   }
-} 
+}
