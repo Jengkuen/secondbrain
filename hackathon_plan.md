@@ -59,7 +59,7 @@ This plan focuses on building the MVP defined in `hackathon_prd.md` with maximum
 
 **Hour 2: Document Storage (Local File) (1:00-2:00)**
 
-*   **(1:00-1:40) Document Saving Logic (API Route):**
+*   ✅ **(1:00-1:40) Document Saving Logic (API Route):**
     *   Modify `app/api/chat/route.ts`.
     *   Import `fs/promises`: `import fs from 'fs/promises';`
     *   Import `path`: `import path from 'path';`
@@ -81,7 +81,7 @@ This plan focuses on building the MVP defined in `hackathon_prd.md` with maximum
             ```
         *   **Append new document:** `documents.push(newDoc);`
         *   **Write back to file:** `await fs.writeFile(filePath, JSON.stringify(documents, null, 2)); // Use null, 2 for pretty printing`
-*   **(1:40-2:00) Testing Document Creation:**
+*   ✅ **(1:40-2:00) Testing Document Creation:**
     *   Run a few chat interactions.
     *   Open `documents.json` in your editor (Cursor) and verify entries are being added with the correct structure (id, topic, content, timestamp).
     *   (Optional Stretch Goal): Create `app/api/documents/route.ts` with a `GET` handler using `fs.readFile(filePath, 'utf-8')` to return the file content. Add a button to the frontend to fetch from `/api/documents` and display the raw JSON.
