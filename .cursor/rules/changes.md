@@ -1,0 +1,1 @@
+Make sure you operate in second-brain-hackathon folder instead of secondbrain root folder
