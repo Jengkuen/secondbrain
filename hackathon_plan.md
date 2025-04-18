@@ -117,3 +117,100 @@ This plan focuses on building the MVP defined in `hackathon_prd.md` with maximum
 
 ---
 This plan prioritizes a functional local demo within the tight time constraint. 
+
+---
+
+## Refinement: Improving RAG with Embeddings (Post-Hackathon or Time Permitting)
+
+This section outlines how to replace the basic keyword RAG with a more robust semantic search using embeddings. This improves relevance significantly but adds complexity.
+
+**Key Idea:** Store an embedding (a vector representation of meaning) for each document. When a new query comes in, generate its embedding and find the document(s) with the most similar embeddings (using cosine similarity).
+
+**Steps:**
+
+1.  **Modify Document Structure:**
+    *   Update the `Document` interface in `app/api/chat/route.ts` to include an embedding field:
+        ```typescript
+        interface Document { 
+          id: string; 
+          topic: string; 
+          content: string; 
+          timestamp: string;
+          embedding: number[]; // Add this line
+        }
+        ```
+    *   **Note:** Storing embeddings directly in JSON is inefficient for large datasets but acceptable for this scope. Real applications would use a vector database.
+
+2.  **Generate Embeddings on Save:**
+    *   In `app/api/chat/route.ts`, *before* saving the `newDoc`:
+    *   Initialize the embedding model (needs to be done once, ideally outside the request handler or cached):
+        ```typescript
+        // Add near other imports/constants
+        const { GoogleGenerativeAI } = require("@google/generative-ai"); 
+        // ... existing genAI setup for chat model ...
+        const embeddingModel = genAI.getGenerativeModel("embedding-001"); 
+        ```
+    *   Generate the embedding for the document content:
+        ```typescript
+        // Inside the POST handler, before saving newDoc
+        const docContentToEmbed = newDoc.content; // Or potentially just the AI response, or a summary
+        const embeddingResult = await embeddingModel.embedContent(docContentToEmbed);
+        const documentEmbedding = embeddingResult.embedding.values; 
+        
+        // Add embedding to the document object
+        newDoc.embedding = documentEmbedding; 
+        ```
+    *   Save the `newDoc` (which now includes the `embedding` array) to `documents.json`.
+    *   **Important:** Existing documents in `documents.json` will lack embeddings. You'll need to either manually clear the file or write a script to backfill embeddings for old documents if you want them included in semantic search.
+
+3.  **Implement Semantic Search Logic:**
+    *   In `app/api/chat/route.ts`, replace the **Simple Keyword Matching** block with the following:
+    *   **Get Query Embedding:**
+        ```typescript
+        // Before calling the chat model, after reading documents
+        const queryEmbeddingResult = await embeddingModel.embedContent(message);
+        const queryEmbedding = queryEmbeddingResult.embedding.values;
+        ```
+    *   **Calculate Similarities:**
+        *   Install a helper library for vector math (cosine similarity): `npm install cosine-similarity`
+        *   Import it: `import cosineSimilarity from 'cosine-similarity';`
+        *   Find the most relevant document:
+        ```typescript
+        let contextString = "";
+        let mostSimilarDoc: Document | null = null;
+        let highestSimilarity = -1; // Cosine similarity ranges from -1 to 1
+
+        // Ensure documents have embeddings before comparing
+        const docsWithEmbeddings = documents.filter(doc => doc.embedding && Array.isArray(doc.embedding));
+
+        for (const doc of docsWithEmbeddings) {
+          const similarity = cosineSimilarity(queryEmbedding, doc.embedding);
+          if (similarity > highestSimilarity) {
+            highestSimilarity = similarity;
+            mostSimilarDoc = doc;
+          }
+        }
+
+        // Define a relevance threshold (e.g., 0.7) - adjust as needed
+        const SIMILARITY_THRESHOLD = 0.7; 
+        if (mostSimilarDoc && highestSimilarity > SIMILARITY_THRESHOLD) {
+          contextString = `Context from previous discussion (topic: ${mostSimilarDoc.topic}):
+${mostSimilarDoc.content}
+
+---
+
+`;
+          console.log(`Found relevant document with similarity: ${highestSimilarity}`);
+        } else {
+          console.log(`No sufficiently relevant document found (highest similarity: ${highestSimilarity})`);
+        }
+        ```
+    *   **Use Context:** Construct `enhancedPrompt` using `contextString` as before:
+        `const enhancedPrompt = contextString + "User query: " + message;`
+    *   Call the chat model (`gemini-pro`) with `enhancedPrompt`.
+
+4.  **Testing:**
+    *   Clear `documents.json` or ensure existing entries have embeddings.
+    *   Create a few distinct documents via chat.
+    *   Ask follow-up questions that are semantically related but may not share exact keywords.
+    *   Check the console logs in the API route to see if context is being correctly identified and added based on similarity scores. Adjust the `SIMILARITY_THRESHOLD` if needed. 
