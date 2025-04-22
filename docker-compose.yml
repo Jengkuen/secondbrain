@@ -1,0 +1,23 @@
+# docker-compose.yml
+version: '3.4'
+services:
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:latest
+    ports:
+      - "8080:8080"
+      - "50051:50051" # gRPC port
+    volumes:
+      - ./weaviate_data:/var/lib/weaviate # Persist data
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true' # Disable auth for local dev
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'text2vec-transformers' # Or none, text2vec-google, etc.
+      ENABLE_MODULES: 'text2vec-transformers,generative-openai' # Adjust as needed
+      TRANSFORMERS_INFERENCE_API: 'http://t2v-transformers:8080'
+      CLUSTER_HOSTNAME: 'node1'
+  t2v-transformers:
+    image: cr.weaviate.io/semitechnologies/transformers-inference:sentence-transformers-multi-qa-MiniLM-L6-cos-v1 # Example model
+    environment:
+      ENABLE_CUDA: '0' # Set to 1 if you have CUDA support
+      # NVIDIA_VISIBLE_DEVICES: 'all' # Uncomment if using CUDA 
